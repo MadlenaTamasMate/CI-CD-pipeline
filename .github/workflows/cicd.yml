@@ -1,0 +1,55 @@
+
+name: CI-CD Pipeline
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-test-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore CI_CD_Feladatkezelo_Projekt/TaskManager.Tests/TaskManager.Tests.csproj
+
+      - name: Build application
+        run: dotnet build CI_CD_Feladatkezelo_Projekt/TaskManager.Api/TaskManager.Api.csproj --configuration Release
+
+      - name: Run automated tests
+        run: dotnet test CI_CD_Feladatkezelo_Projekt/TaskManager.Tests/TaskManager.Tests.csproj --configuration Release
+
+      - name: Publish application
+        run: dotnet publish CI_CD_Feladatkezelo_Projekt/TaskManager.Api/TaskManager.Api.csproj --configuration Release --output ./publish
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: taskmanager-app
+          path: ./publish
+
+      - name: Deploy to sandbox
+        run: |
+          cd publish
+          dotnet TaskManager.Api.dll &
+          APP_PID=$!
+          trap 'kill $APP_PID 2>/dev/null || true' EXIT
+          for i in $(seq 1 30); do
+            if curl --fail http://localhost:5000/health; then
+              echo "Application is running"
+              exit 0
+            fi
+            sleep 2
+          done
+          exit 1
+        env:
+          ASPNETCORE_URLS: http://localhost:5000
