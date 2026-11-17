@@ -46,6 +46,20 @@ jobs:
           for i in $(seq 1 30); do
             if curl --fail http://localhost:5000/health; then
               echo "Application is running"
+
+              echo "Testing business API..."
+
+              curl -fsS http://localhost:5000/
+
+              curl -fsS -X POST http://localhost:5000/api/tasks \
+                -H 'Content-Type: application/json' \
+                -d '{"title":"Pipeline ellenőrzés"}' \
+                | grep -q 'Pipeline ellenőrzés'
+
+              curl -fsS http://localhost:5000/api/tasks \
+                | grep -q 'Pipeline ellenőrzés'
+
+              echo "Business API verification passed!"
               exit 0
             fi
             sleep 2
