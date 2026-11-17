@@ -1,0 +1,61 @@
+name: CI-CD
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+  packages: write
+jobs:
+  build-test-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Restore
+        run: dotnet restore TaskManager.Tests/TaskManager.Tests.csproj
+      - name: Build
+        run: dotnet build TaskManager.Tests/TaskManager.Tests.csproj -c Release --no-restore
+      - name: Unit tests
+        run: dotnet test TaskManager.Tests/TaskManager.Tests.csproj -c Release --no-build --logger trx
+      - name: Publish artifact
+        run: dotnet publish TaskManager.Api/TaskManager.Api.csproj -c Release -o ./publish
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: taskmanager-publish
+          path: publish/
+      - name: Build Docker image
+        run: docker build -t taskmanager:${{ github.sha }} .
+      - name: Deploy to sandbox container
+        run: docker run -d --name taskmanager -p 8080:8080 taskmanager:${{ github.sha }}
+      - name: Verify deployment and business API
+        run: |
+          for i in {1..30}; do
+            if curl -fsS http://localhost:8080/health; then break; fi
+            sleep 2
+          done
+          curl -fsS http://localhost:8080/health
+          curl -fsS http://localhost:8080/
+          curl -fsS -X POST http://localhost:8080/api/tasks -H 'Content-Type: application/json' -d '{"title":"Pipeline ellenőrzés"}' | grep -q 'Pipeline ellenőrzés'
+          curl -fsS http://localhost:8080/api/tasks | grep -q 'Pipeline ellenőrzés'
+      - name: Login to GitHub Container Registry
+        if: success()
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push image artifact to registry
+        if: success()
+        run: |
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}:latest"
+          docker tag taskmanager:${{ github.sha }} "$IMAGE"
+          docker push "$IMAGE"
+      - name: Container logs
+        if: always()
+        run: docker logs taskmanager || true
